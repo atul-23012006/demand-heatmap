@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NYC Ride-Hailing Demand Heatmap</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>NYC Demand Heatmap</h1>
+      <p class="subtitle">Predicted pickup demand by zone &middot; NYC TLC yellow-taxi trips</p>
+    </div>
+
+    <div class="controls">
+      <label class="control">
+        <span>Date</span>
+        <input id="date-input" type="date" min="2024-03-18" max="2024-03-31" value="2024-03-20" />
+      </label>
+      <label class="control control-wide">
+        <span id="hour-label">Hour: 18:00</span>
+        <input id="hour-input" type="range" min="0" max="23" value="18" step="1" />
+      </label>
+      <div class="tabs">
+        <button id="tab-map" class="tab-btn active">Map</button>
+        <button id="tab-metrics" class="tab-btn">Model Performance</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-map" class="view active">
+      <div id="map"></div>
+
+      <aside class="panel">
+        <div class="legend">
+          <h3>Predicted demand (trips/hr)</h3>
+          <div id="legend-scale" class="legend-scale"></div>
+        </div>
+
+        <div id="selection-panel" class="selection-panel">
+          <p class="hint">Click a zone on the map to see recommended repositioning targets for a driver starting there.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section id="view-metrics" class="view">
+      <div class="metrics-wrap">
+        <h2>Model vs. baseline (held-out test: 2024-03-18 &ndash; 2024-03-31)</h2>
+        <p class="hint">Baseline = historical mean trip count by (zone, day-of-week, hour), fit on training data only (Jan 1 &ndash; Mar 17 2024).</p>
+        <div id="stat-tiles" class="stat-tiles"></div>
+
+        <h3>Per-zone error (top 20 by average demand)</h3>
+        <div class="table-wrap">
+          <table id="zone-table">
+            <thead>
+              <tr><th>Zone</th><th>Borough</th><th>Avg. actual/hr</th><th>Model MAE</th><th>Baseline MAE</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

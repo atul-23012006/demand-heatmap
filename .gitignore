@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Generated data & model artifacts (reproducible via scripts/*.py)
+data/raw/
+data/processed/
+backend/model_artifacts/
+

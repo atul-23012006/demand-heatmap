@@ -1,0 +1,18 @@
+[project]
+name = "demand-heatmap"
+version = "0.1.0"
+description = "Ride-hailing demand heatmap predictor (NYC TLC trip data)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "duckdb>=1.1",
+    "pandas>=2.2",
+    "pyarrow>=17.0",
+    "scikit-learn>=1.5",
+    "requests>=2.32",
+    "pyshp>=3.1.6",
+    "pyproj>=3.8.0",
+    "shapely>=2.1.2",
+    "joblib>=1.6.0",
+]
