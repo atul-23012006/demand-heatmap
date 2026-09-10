@@ -25,6 +25,7 @@
       </label>
       <div class="tabs">
         <button id="tab-map" class="tab-btn active">Map</button>
+        <button id="tab-earnings" class="tab-btn">Earnings Sim</button>
         <button id="tab-metrics" class="tab-btn">Model Performance</button>
       </div>
     </div>
@@ -40,10 +41,51 @@
           <div id="legend-scale" class="legend-scale"></div>
         </div>
 
+        <div class="mode-toggle">
+          <button id="mode-single" class="mode-btn active">Single driver</button>
+          <button id="mode-fleet" class="mode-btn">Fleet (multi-driver)</button>
+        </div>
+
         <div id="selection-panel" class="selection-panel">
           <p class="hint">Click a zone on the map to see recommended repositioning targets for a driver starting there.</p>
         </div>
+
+        <div id="fleet-panel" class="selection-panel" style="display:none">
+          <p class="hint">Click up to 8 zones to place drivers, then balance the fleet so they don't all get sent to the same hotspot.</p>
+          <ul id="fleet-driver-list" class="reco-list"></ul>
+          <div class="fleet-actions">
+            <button id="fleet-balance-btn" class="action-btn" disabled>Balance Fleet</button>
+            <button id="fleet-clear-btn" class="action-btn secondary">Clear</button>
+          </div>
+          <div id="fleet-results"></div>
+        </div>
       </aside>
+    </section>
+
+    <section id="view-earnings" class="view">
+      <div class="metrics-wrap">
+        <h2>Driver earnings simulator</h2>
+        <p class="hint">
+          Replays one day of predicted demand and compares two strategies: staying in one
+          zone all day vs. repositioning each hour toward the best-scoring reachable zone.
+          Earnings are an illustrative saturation-heuristic simulation, not a calibrated
+          fare/dispatch model &mdash; see the assumptions note after running.
+        </p>
+
+        <div class="sim-controls">
+          <label class="control">
+            <span>Starting zone</span>
+            <select id="sim-zone-select"></select>
+          </label>
+          <label class="control">
+            <span>Date</span>
+            <input id="sim-date-input" type="date" min="2024-03-18" max="2024-03-31" value="2024-03-20" />
+          </label>
+          <button id="sim-run-btn" class="action-btn">Run simulation</button>
+        </div>
+
+        <div id="sim-results"></div>
+      </div>
     </section>
 
     <section id="view-metrics" class="view">

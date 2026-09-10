@@ -41,6 +41,13 @@ let demandByZone = {};    // zone_id -> predicted value (current hour)
 let selectedZoneId = null;
 let recoLines = [];
 
+let uiMode = "single";    // "single" | "fleet"
+let fleetDrivers = [];    // [zone_id, ...] in click order
+let fleetMarkers = {};    // zone_id -> L.marker
+let fleetLines = [];
+const DRIVER_COLORS = ["#f5c518", "#3b82f6", "#22c55e", "#ef4444", "#a855f7", "#06b6d4", "#f97316", "#ec4899"];
+const MAX_FLEET_DRIVERS = 8;
+
 function currentDatetime() {
   const date = document.getElementById("date-input").value;
   const hour = document.getElementById("hour-input").value.padStart(2, "0");
@@ -68,7 +75,10 @@ async function initMap() {
     onEachFeature: (feature, layer) => {
       const zid = feature.properties.zone_id;
       zoneLayers[zid] = layer;
-      layer.on("click", () => selectZone(zid));
+      layer.on("click", () => {
+        if (uiMode === "fleet") toggleFleetDriver(zid);
+        else selectZone(zid);
+      });
       layer.on("mouseover", () => layer.setStyle({ weight: 2, color: "#fff" }));
       layer.on("mouseout", () => restyleZone(zid));
       layer.bindTooltip(
@@ -190,6 +200,196 @@ async function loadRecommendations(zid) {
   }
 }
 
+// ---- fleet (multi-driver load balancing) mode ----
+function setMode(mode) {
+  uiMode = mode;
+  document.getElementById("mode-single").classList.toggle("active", mode === "single");
+  document.getElementById("mode-fleet").classList.toggle("active", mode === "fleet");
+  document.getElementById("selection-panel").style.display = mode === "single" ? "block" : "none";
+  document.getElementById("fleet-panel").style.display = mode === "fleet" ? "block" : "none";
+}
+
+function toggleFleetDriver(zid) {
+  const idx = fleetDrivers.indexOf(zid);
+  if (idx !== -1) {
+    fleetDrivers.splice(idx, 1);
+    if (fleetMarkers[zid]) {
+      map.removeLayer(fleetMarkers[zid]);
+      delete fleetMarkers[zid];
+    }
+  } else {
+    if (fleetDrivers.length >= MAX_FLEET_DRIVERS) return;
+    fleetDrivers.push(zid);
+  }
+  renderFleetMarkers();
+  renderFleetList();
+  clearFleetLines();
+  document.getElementById("fleet-results").innerHTML = "";
+}
+
+function renderFleetMarkers() {
+  fleetDrivers.forEach((zid, i) => {
+    const c = zoneCentroids[zid];
+    if (!c) return;
+    if (!fleetMarkers[zid]) {
+      fleetMarkers[zid] = L.circleMarker([c.lat, c.lon], {
+        radius: 9, weight: 2, color: "#fff", fillColor: DRIVER_COLORS[i % DRIVER_COLORS.length], fillOpacity: 1,
+      }).addTo(map);
+    } else {
+      fleetMarkers[zid].setStyle({ fillColor: DRIVER_COLORS[i % DRIVER_COLORS.length] });
+    }
+    fleetMarkers[zid].bindTooltip(`Driver ${i + 1}`, { permanent: false });
+  });
+}
+
+function renderFleetList() {
+  const list = document.getElementById("fleet-driver-list");
+  list.innerHTML = fleetDrivers
+    .map((zid, i) => {
+      const meta = zoneMeta[zid] || {};
+      const color = DRIVER_COLORS[i % DRIVER_COLORS.length];
+      return `<li>
+        <span class="driver-chip" style="background:${color}">${i + 1}</span>
+        <span class="reco-name">${meta.zone_name ?? "Zone " + zid}<span class="reco-borough">${meta.borough ?? ""}</span></span>
+        <button class="driver-remove" data-zid="${zid}" title="Remove">&times;</button>
+      </li>`;
+    })
+    .join("");
+  list.querySelectorAll(".driver-remove").forEach((btn) =>
+    btn.addEventListener("click", () => toggleFleetDriver(Number(btn.dataset.zid)))
+  );
+  document.getElementById("fleet-balance-btn").disabled = fleetDrivers.length === 0;
+}
+
+function clearFleetLines() {
+  fleetLines.forEach((l) => map.removeLayer(l));
+  fleetLines = [];
+}
+
+function clearFleet() {
+  fleetDrivers.forEach((zid) => fleetMarkers[zid] && map.removeLayer(fleetMarkers[zid]));
+  fleetDrivers = [];
+  fleetMarkers = {};
+  clearFleetLines();
+  renderFleetList();
+  document.getElementById("fleet-results").innerHTML = "";
+}
+
+async function balanceFleet() {
+  if (fleetDrivers.length === 0) return;
+  const dt = currentDatetime();
+  const drivers = fleetDrivers.map((zid, i) => ({ driver_id: `driver_${i + 1}`, zone_id: zid }));
+  const resp = await fetch(`${API}/recommend_batch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ datetime: dt, drivers }),
+  });
+  const results = document.getElementById("fleet-results");
+  if (!resp.ok) {
+    results.innerHTML = `<p class="hint">No data for this hour.</p>`;
+    return;
+  }
+  const data = await resp.json();
+  clearFleetLines();
+
+  let html = `<h3 style="font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-top:16px;">Assignments</h3><ul class="reco-list">`;
+  data.assignments.forEach((a, i) => {
+    const originZid = fleetDrivers[i];
+    const origin = zoneCentroids[originZid];
+    const dest = zoneCentroids[a.zone_id];
+    const color = DRIVER_COLORS[i % DRIVER_COLORS.length];
+    if (origin && dest) {
+      const line = L.polyline([[origin.lat, origin.lon], [dest.lat, dest.lon]], {
+        color, weight: 3, opacity: 0.7, dashArray: originZid === a.zone_id ? null : "4 5",
+      }).addTo(map);
+      fleetLines.push(line);
+    }
+    html += `
+      <li>
+        <span class="driver-chip" style="background:${color}">${i + 1}</span>
+        <span class="reco-name">${a.zone_name}<span class="reco-borough">${a.predicted_demand.toFixed(0)} trips/hr &middot; ${a.travel_min.toFixed(0)} min${a.over_capacity ? " &middot; over capacity" : ""}</span></span>
+      </li>`;
+  });
+  html += `</ul>`;
+  results.innerHTML = html;
+}
+
+function setupFleetMode() {
+  document.getElementById("mode-single").addEventListener("click", () => setMode("single"));
+  document.getElementById("mode-fleet").addEventListener("click", () => setMode("fleet"));
+  document.getElementById("fleet-balance-btn").addEventListener("click", balanceFleet);
+  document.getElementById("fleet-clear-btn").addEventListener("click", clearFleet);
+}
+
+// ---- earnings simulator tab ----
+function populateSimZoneSelect() {
+  const select = document.getElementById("sim-zone-select");
+  const zones = Object.entries(zoneMeta).sort((a, b) => a[1].zone_name.localeCompare(b[1].zone_name));
+  select.innerHTML = zones
+    .map(([zid, meta]) => `<option value="${zid}">${meta.zone_name} (${meta.borough})</option>`)
+    .join("");
+  select.value = "161"; // Midtown Center, a reliably high-demand default
+}
+
+function renderSimResults(data) {
+  const results = document.getElementById("sim-results");
+  const lift = data.earnings_lift_pct;
+  const liftHtml = lift == null ? "n/a" : `${lift > 0 ? "+" : ""}${lift.toFixed(1)}%`;
+
+  const allHours = data.stay_put.hours.map((h, i) => ({
+    stay: h.earnings, follow: data.follow_model.hours[i].earnings, label: h.hour.slice(11, 13),
+  }));
+  const maxEarn = Math.max(1, ...allHours.flatMap((h) => [h.stay, h.follow]));
+
+  const bars = allHours
+    .map(
+      (h) => `<div class="sim-hour-col">
+        <div class="sim-bar stay" style="height:${(h.stay / maxEarn) * 100}%" title="Stay put: $${h.stay.toFixed(2)}"></div>
+        <div class="sim-bar follow" style="height:${(h.follow / maxEarn) * 100}%" title="Follow model: $${h.follow.toFixed(2)}"></div>
+      </div>`
+    )
+    .join("");
+  const labels = allHours.map((h) => `<span>${h.label}</span>`).join("");
+
+  results.innerHTML = `
+    <div class="stat-tiles">
+      <div class="stat-tile">
+        <div class="stat-label">Stay put &mdash; total</div>
+        <div class="stat-value">$${data.stay_put.total_earnings.toFixed(2)}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Follow model &mdash; total</div>
+        <div class="stat-value good">$${data.follow_model.total_earnings.toFixed(2)}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Earnings lift</div>
+        <div class="stat-value good">${liftHtml}</div>
+      </div>
+    </div>
+    <div class="sim-legend">
+      <span class="legend-stay">Stay put</span>
+      <span class="legend-follow">Follow model</span>
+    </div>
+    <div class="sim-chart">${bars}</div>
+    <div class="sim-hour-labels">${labels}</div>
+    <p class="hint" style="margin-top:16px;">${data.assumptions.note} Saturation constant:
+      ${data.assumptions.trips_per_driver_saturation} predicted trips/hr = 1 fully-utilized driver.</p>
+  `;
+}
+
+async function runSimulation() {
+  const startZone = document.getElementById("sim-zone-select").value;
+  const date = document.getElementById("sim-date-input").value;
+  const results = document.getElementById("sim-results");
+  results.innerHTML = `<p class="hint">Running simulation&hellip;</p>`;
+  const resp = await fetch(`${API}/simulate?start_zone=${startZone}&date=${date}`);
+  if (!resp.ok) {
+    results.innerHTML = `<p class="hint">No data for that date.</p>`;
+    return;
+  }
+  renderSimResults(await resp.json());
+}
+
 // ---- metrics tab ----
 async function loadMetrics() {
   const resp = await fetch(`${API}/metrics`);
@@ -239,34 +439,36 @@ async function loadMetrics() {
 
 // ---- tabs ----
 function setupTabs() {
-  const tabMap = document.getElementById("tab-map");
-  const tabMetrics = document.getElementById("tab-metrics");
-  const viewMap = document.getElementById("view-map");
-  const viewMetrics = document.getElementById("view-metrics");
+  const tabs = {
+    map: { btn: document.getElementById("tab-map"), view: document.getElementById("view-map") },
+    earnings: { btn: document.getElementById("tab-earnings"), view: document.getElementById("view-earnings") },
+    metrics: { btn: document.getElementById("tab-metrics"), view: document.getElementById("view-metrics") },
+  };
 
-  tabMap.addEventListener("click", () => {
-    tabMap.classList.add("active");
-    tabMetrics.classList.remove("active");
-    viewMap.classList.add("active");
-    viewMetrics.classList.remove("active");
-    setTimeout(() => map.invalidateSize(), 50);
-  });
-  tabMetrics.addEventListener("click", () => {
-    tabMetrics.classList.add("active");
-    tabMap.classList.remove("active");
-    viewMetrics.classList.add("active");
-    viewMap.classList.remove("active");
-    loadMetrics();
-  });
+  function activate(name) {
+    Object.entries(tabs).forEach(([key, t]) => {
+      t.btn.classList.toggle("active", key === name);
+      t.view.classList.toggle("active", key === name);
+    });
+    if (name === "map") setTimeout(() => map.invalidateSize(), 50);
+    if (name === "metrics") loadMetrics();
+  }
+
+  tabs.map.btn.addEventListener("click", () => activate("map"));
+  tabs.earnings.btn.addEventListener("click", () => activate("earnings"));
+  tabs.metrics.btn.addEventListener("click", () => activate("metrics"));
 }
 
 async function main() {
   setupTabs();
+  setupFleetMode();
   await initMap();
   await refreshHeatmap();
+  populateSimZoneSelect();
 
   document.getElementById("date-input").addEventListener("change", refreshHeatmap);
   document.getElementById("hour-input").addEventListener("input", refreshHeatmap);
+  document.getElementById("sim-run-btn").addEventListener("click", runSimulation);
 }
 
 main();

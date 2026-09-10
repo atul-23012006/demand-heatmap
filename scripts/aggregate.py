@@ -71,6 +71,28 @@ def main() -> None:
     df.to_parquet(out_path, index=False)
     print(f"wrote {out_path}")
 
+    # Average fare per zone (training period only, matching the model's train split),
+    # used by the earnings simulator. fare_amount is metered fare excluding tips/tolls;
+    # clipped to drop obvious data-entry errors (negative/zero or absurdly large fares).
+    fares_query = f"""
+        SELECT
+            PULocationID AS zone_id,
+            avg(fare_amount) AS avg_fare
+        FROM '{parquet_glob}'
+        WHERE PULocationID IS NOT NULL
+          AND tpep_pickup_datetime >= '2024-01-01' AND tpep_pickup_datetime < '2024-03-18'
+          AND fare_amount BETWEEN 2.5 AND 200
+        GROUP BY 1
+    """
+    fares_df = con.execute(fares_query).fetchdf()
+    overall_avg_fare = float(fares_df["avg_fare"].mean())
+    # zones with no training-period trips (rare) fall back to the citywide average
+    fares_df = fares_df.set_index("zone_id").reindex(range(1, 264)).reset_index()
+    fares_df["avg_fare"] = fares_df["avg_fare"].fillna(overall_avg_fare)
+    fares_out = PROCESSED_DIR / "zone_fares.parquet"
+    fares_df.to_parquet(fares_out, index=False)
+    print(f"wrote {fares_out}")
+
 
 if __name__ == "__main__":
     main()

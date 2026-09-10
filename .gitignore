@@ -14,3 +14,6 @@ data/raw/
 data/processed/
 backend/model_artifacts/
 
+# Test tooling
+.pytest_cache/
+

@@ -15,6 +15,16 @@ BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{mon
 ZONE_LOOKUP_URL = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
 ZONE_SHAPES_URL = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zones.zip"
 
+# Free, keyless historical weather API. Manhattan centroid used as a single
+# city-wide station — demand modeling doesn't need per-zone weather granularity.
+WEATHER_URL = (
+    "https://archive-api.open-meteo.com/v1/archive"
+    "?latitude=40.7128&longitude=-74.0060"
+    "&start_date=2024-01-01&end_date=2024-03-31"
+    "&hourly=temperature_2m,precipitation,snowfall,wind_speed_10m"
+    "&timezone=America%2FNew_York"
+)
+
 
 def download(url: str, dest: Path) -> None:
     if dest.exists():
@@ -63,6 +73,29 @@ def shapefile_zip_to_geojson(zip_bytes: bytes, out_path: Path) -> None:
     print(f"wrote {out_path.name} with {len(features)} zones")
 
 
+def download_weather(dest: Path) -> None:
+    if dest.exists():
+        print(f"skip (exists): {dest.name}")
+        return
+    print(f"downloading weather -> {dest.name}")
+    resp = requests.get(WEATHER_URL, timeout=60)
+    resp.raise_for_status()
+    hourly = resp.json()["hourly"]
+    import csv
+
+    with open(dest, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["pickup_hour", "temp_c", "precip_mm", "snow_cm", "wind_kmh"])
+        for row in zip(
+            hourly["time"],
+            hourly["temperature_2m"],
+            hourly["precipitation"],
+            hourly["snowfall"],
+            hourly["wind_speed_10m"],
+        ):
+            writer.writerow(row)
+
+
 def main() -> None:
     for month in TRIP_MONTHS:
         url = BASE_URL.format(month=month)
@@ -70,6 +103,7 @@ def main() -> None:
         download(url, dest)
 
     download(ZONE_LOOKUP_URL, RAW_DIR / "taxi_zone_lookup.csv")
+    download_weather(RAW_DIR / "weather.csv")
 
     geojson_path = RAW_DIR / "taxi_zones.geojson"
     if geojson_path.exists():

@@ -1,0 +1,9 @@
+.venv
+.git
+__pycache__
+*.pyc
+.pytest_cache
+data/raw
+data/processed
+backend/model_artifacts
+Problem_Statements_rev_1.pdf

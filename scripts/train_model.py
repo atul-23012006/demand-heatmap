@@ -10,6 +10,7 @@ import pandas as pd
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 ROOT = Path(__file__).resolve().parent.parent
+RAW_DIR = ROOT / "data" / "raw"
 PROCESSED_DIR = ROOT / "data" / "processed"
 MODEL_DIR = ROOT / "backend" / "model_artifacts"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,9 +47,15 @@ def add_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
+    weather = pd.read_csv(RAW_DIR / "weather.csv", parse_dates=["pickup_hour"])
+    return df.merge(weather, on="pickup_hour", how="left")
+
+
 FEATURE_COLS = [
     "zone_id", "hour", "dow", "day", "month", "is_weekend", "is_holiday",
     "lag_1h", "lag_24h", "lag_168h", "roll_mean_24h", "roll_mean_168h",
+    "temp_c", "precip_mm", "snow_cm", "wind_kmh",
 ]
 CATEGORICAL_COLS = ["hour", "dow", "month"]  # zone_id kept numeric: cardinality (263) exceeds
 # HistGradientBoostingRegressor's native categorical limit (255); trees still split on it fine.
@@ -62,6 +69,7 @@ def main() -> None:
     panel = pd.read_parquet(PROCESSED_DIR / "hourly_demand.parquet")
     panel = add_time_features(panel)
     panel = add_lag_features(panel)
+    panel = add_weather_features(panel)
 
     # Rows without full 168h history can't be used for training (first 7 days per zone).
     train_ready = panel.dropna(subset=["lag_168h"]).copy()
@@ -76,9 +84,10 @@ def main() -> None:
     cat_mask = [c in CATEGORICAL_COLS for c in FEATURE_COLS]
     model = HistGradientBoostingRegressor(
         loss="poisson",
-        max_iter=300,
-        learning_rate=0.08,
+        max_iter=400,
+        learning_rate=0.06,
         max_depth=8,
+        l2_regularization=0.5,
         categorical_features=cat_mask,
         random_state=42,
     )
