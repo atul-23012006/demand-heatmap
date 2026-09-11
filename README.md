@@ -71,13 +71,21 @@ http://127.0.0.1:8000/
 ## Tests
 
 ```bash
+uv run playwright install chromium   # one-time, for the browser UI tests
 uv run pytest
 ```
 
-Feature-engineering tests (`tests/test_feature_engineering.py`) run standalone.
-API tests (`tests/test_api.py`) spin up the FastAPI app against the real
-generated artifacts and are skipped automatically if the data pipeline hasn't
-been run yet.
+- `tests/test_feature_engineering.py` — pure-function unit tests (lag/rolling
+  feature correctness, no leakage, WAPE calc). Run standalone.
+- `tests/test_api.py` — full API surface via FastAPI's TestClient against the
+  real generated artifacts, including load-balancer spillover behavior.
+- `tests/test_ui.py` — Playwright browser tests against a real running server:
+  the map renders all 263 zone polygons, tabs switch, zone selection drives
+  the recommend panel, fleet mode toggles and balances, the earnings
+  simulator runs end to end.
+
+All three skip automatically (not fail) if the data pipeline hasn't been run
+yet, since `backend/main.py` loads model artifacts from disk at import time.
 
 ## Project layout
 

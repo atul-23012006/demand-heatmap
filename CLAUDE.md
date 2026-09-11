@@ -46,7 +46,8 @@ uv run python scripts/build_travel_matrix.py   # real OSRM driving-time matrix, 
 
 uv run uvicorn backend.main:app --reload --port 8123   # run the app at http://127.0.0.1:8123/
 
-uv run pytest                             # run the test suite (API tests skip if the pipeline hasn't been run)
+uv run playwright install chromium        # one-time; needed for tests/test_ui.py
+uv run pytest                             # run the test suite (API/UI tests skip if the pipeline hasn't been run)
 
 docker compose up --build                 # containerized run; see entrypoint.sh for pipeline auto-bootstrap
 ```
@@ -157,6 +158,17 @@ is always safe (idempotent downloads skip existing files).
   collection. `scripts/__init__.py` and `backend/__init__.py` exist only so
   tests can import from them; `pythonpath = ["."]` in `pyproject.toml` makes
   the repo root importable.
+- `test_ui.py` uses Playwright against a **real uvicorn subprocess**
+  (`live_server` fixture in `conftest.py`), not the ASGI TestClient — a
+  browser needs actual HTTP-served HTML/JS/CSS, not an in-process ASGI app.
+  `live_server` picks a free port itself so tests don't collide with a
+  `--reload` dev server you might have running. Zone selection and fleet
+  driver placement are driven via `page.evaluate("selectZone(161)")` /
+  `toggleFleetDriver(...)` (both are plain top-level functions in `app.js`,
+  a classic script not a module, so they're already on `window`) rather than
+  clicking specific map pixel coordinates, which would be brittle against
+  zoom/projection changes. Needs `uv run playwright install chromium` once
+  before first run — not installed automatically by `uv sync`.
 - Docker (`Dockerfile`, `docker-compose.yml`, `entrypoint.sh`): the image
   installs dependencies at build time via `uv sync --frozen --no-dev`, and
   `entrypoint.sh` always runs `uv run --no-sync` — the `--no-sync` matters,
