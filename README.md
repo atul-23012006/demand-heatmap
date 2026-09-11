@@ -25,6 +25,15 @@ driver should reposition to, using real NYC TLC yellow-taxi trip data
   "stay in one zone all day" vs. "reposition every hour toward the
   best-scoring zone," with an hour-by-hour earnings chart.
 
+## Tech stack
+
+- **Backend**: Python, FastAPI, uvicorn
+- **ML**: scikit-learn (`HistGradientBoostingRegressor`), pandas, DuckDB (data aggregation)
+- **Frontend**: vanilla JS, Leaflet.js (no build step, no framework)
+- **Data sources**: NYC TLC trip records, Open-Meteo weather API
+- **Tests**: pytest + FastAPI TestClient
+- **Deployment**: Docker, docker-compose
+
 ## Setup
 
 Requires [uv](https://docs.astral.sh/uv/).
