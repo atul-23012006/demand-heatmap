@@ -33,6 +33,16 @@ _per_zone_metrics = pd.read_parquet(MODEL_DIR / "per_zone_metrics.parquet")
 
 _zone_fares = pd.read_parquet(DATA_DIR / "processed" / "zone_fares.parquet").set_index("zone_id")
 
+# Real driving times (OSRM), precomputed by scripts/build_travel_matrix.py. Pivoted to a
+# wide zone_from x zone_to matrix for O(1) single-pair lookups and fast per-origin row lookups.
+_travel_matrix_path = DATA_DIR / "processed" / "travel_matrix.parquet"
+_travel_wide = (
+    pd.read_parquet(_travel_matrix_path)
+    .pivot(index="zone_from", columns="zone_to", values="travel_min")
+    if _travel_matrix_path.exists()
+    else pd.DataFrame()
+)
+
 _raw_geojson = json.loads((DATA_DIR / "raw" / "taxi_zones.geojson").read_text())
 _zone_geojson_features = []
 for feat in _raw_geojson["features"]:
@@ -65,7 +75,8 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
-AVG_SPEED_KMH = 22.0  # rough NYC in-traffic average, used only as a travel-time proxy
+AVG_SPEED_KMH = 22.0  # rough NYC in-traffic average -- fallback only, used when a zone
+# pair is missing from the real OSRM travel matrix (e.g. matrix not built yet).
 
 # Heuristic: predicted zone demand this saturated absorbs one productive driver.
 # Used both by the earnings simulator (pickup probability) and the fleet
@@ -74,23 +85,39 @@ AVG_SPEED_KMH = 22.0  # rough NYC in-traffic average, used only as a travel-time
 TRIPS_PER_DRIVER_SATURATION = 8.0
 
 
-def _travel_minutes(origin_zone_id: int, dest_zone_id: int) -> float:
-    if origin_zone_id == dest_zone_id:
-        return 0.0
+def _haversine_travel_min(origin_zone_id: int, dest_zone_id: int) -> float:
     o, d = _zones_by_id.loc[origin_zone_id], _zones_by_id.loc[dest_zone_id]
     km = _haversine_km(o["lat"], o["lon"], d["lat"], d["lon"])
     return km / AVG_SPEED_KMH * 60
 
 
+def _travel_minutes(origin_zone_id: int, dest_zone_id: int) -> float:
+    if origin_zone_id == dest_zone_id:
+        return 0.0
+    if origin_zone_id in _travel_wide.index and dest_zone_id in _travel_wide.columns:
+        v = _travel_wide.at[origin_zone_id, dest_zone_id]
+        if pd.notna(v):
+            return float(v)
+    return _haversine_travel_min(origin_zone_id, dest_zone_id)
+
+
 def _score_zones_for_driver(origin_zone_id: int, rows: pd.DataFrame) -> pd.DataFrame:
     """rows: predictions for a single hour, all zones. Returns rows with travel_min/score,
-    scored from the given driver's origin zone, excluding the origin zone itself."""
+    scored from the given driver's origin zone, excluding the origin zone itself.
+    Travel time comes from the precomputed real-road OSRM matrix; any pair missing from
+    it (should not happen post-build, but kept as a safety net) falls back to haversine."""
     candidates = rows.merge(_zones, on="zone_id", how="left")
-    origin = _zones_by_id.loc[origin_zone_id]
-    candidates["travel_km"] = candidates.apply(
-        lambda r: _haversine_km(origin["lat"], origin["lon"], r["lat"], r["lon"]), axis=1
-    )
-    candidates["travel_min"] = candidates["travel_km"] / AVG_SPEED_KMH * 60
+    if origin_zone_id in _travel_wide.index:
+        candidates["travel_min"] = candidates["zone_id"].map(_travel_wide.loc[origin_zone_id])
+    else:
+        candidates["travel_min"] = float("nan")
+
+    missing = candidates["travel_min"].isna()
+    if missing.any():
+        candidates.loc[missing, "travel_min"] = candidates.loc[missing, "zone_id"].apply(
+            lambda zid: _haversine_travel_min(origin_zone_id, zid)
+        )
+
     candidates["score"] = candidates["model_pred"] / (1 + candidates["travel_min"] / 10)
     return candidates[candidates["zone_id"] != origin_zone_id]
 

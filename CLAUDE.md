@@ -14,7 +14,8 @@ harmless to change in isolation but encode a specific reason.
 
 - The `scripts/*.py` pipeline must run in order (download → prepare_zones →
   aggregate → train_model); each step's output is the next step's input, and
-  there is no other coupling between them.
+  there is no other coupling between them. `build_travel_matrix.py` only
+  depends on `prepare_zones.py`'s output and can run any time after it.
 - `data/raw/`, `data/processed/`, `backend/model_artifacts/` are generated,
   git-ignored, and must stay reproducible from `scripts/` alone — never hand-edit
   files in them.
@@ -41,6 +42,7 @@ uv run python scripts/download_data.py    # downloads ~155MB: 3 months of TLC pa
 uv run python scripts/prepare_zones.py    # shapefile -> zone centroids/reference table -> data/processed/zones.parquet
 uv run python scripts/aggregate.py        # raw trips -> dense hourly (zone x hour) demand panel + avg fare per zone -> data/processed/{hourly_demand,zone_fares}.parquet
 uv run python scripts/train_model.py      # feature engineering + train + baseline comparison -> backend/model_artifacts/, data/processed/predictions.parquet
+uv run python scripts/build_travel_matrix.py   # real OSRM driving-time matrix, all 263x263 zone pairs -> data/processed/travel_matrix.parquet
 
 uv run uvicorn backend.main:app --reload --port 8123   # run the app at http://127.0.0.1:8123/
 
@@ -64,7 +66,17 @@ is always safe (idempotent downloads skip existing files).
   (EPSG:4326) via `pyproj` before writing `taxi_zones.geojson` — Leaflet needs
   lat/lon, and this is the only reprojection step in the pipeline.
 - `scripts/prepare_zones.py` — computes a representative-point centroid per
-  zone (via `shapely`) for the travel-time proxy used by the recommender.
+  zone (via `shapely`) for the recommender's origin/destination points.
+- `scripts/build_travel_matrix.py` — real driving times between all 263x263
+  zone pairs via OSRM's free public demo table API
+  (router.project-osrm.org). The demo server caps table requests at
+  ~100-119 coordinates, so this tiles the matrix: zones split into groups of
+  45, one request per group-pair (21 requests total for 263 zones), diagonal
+  and off-diagonal blocks assembled separately to avoid redundant calls. If
+  you change `GROUP_SIZE`, keep group-pair coordinate counts (up to 2x group
+  size) comfortably under 100. Output is long-form
+  (`zone_from, zone_to, travel_min`); `backend/main.py` pivots it to a wide
+  matrix at startup for O(1) lookups.
 - `scripts/aggregate.py` — produces a **dense** zone × hour panel (cross join
   of all 263 zones × every hour in range, zero-filled), not just hours with
   trips. This matters: without zero-filling, lag/rolling features would have
@@ -92,12 +104,13 @@ is always safe (idempotent downloads skip existing files).
   window, not a live forecast, and the UI intentionally can't be pointed at
   dates outside `data/processed/predictions.parquet`.
 - `/api/recommend` scores candidate zones as
-  `predicted_demand / (1 + travel_min/10)`, where `travel_min` is a
-  haversine-distance-over-assumed-speed proxy (`AVG_SPEED_KMH` in
-  `backend/main.py`) — not a real routing engine. `_score_zones_for_driver` is
-  the shared helper for this; both `/api/recommend` and the per-driver legs of
-  `/api/simulate` and `/api/recommend_batch` call it, so there is one scoring
-  definition, not three.
+  `predicted_demand / (1 + travel_min/10)`, where `travel_min` comes from the
+  precomputed OSRM matrix (`_travel_wide` in `backend/main.py`, built from
+  `data/processed/travel_matrix.parquet`). `AVG_SPEED_KMH`/`_haversine_travel_min`
+  are a fallback only, for a zone pair genuinely missing from the matrix — not
+  the primary path. `_score_zones_for_driver` is the shared helper for this;
+  both `/api/recommend` and the per-driver legs of `/api/simulate` and
+  `/api/recommend_batch` call it, so there is one scoring definition, not three.
 - `TRIPS_PER_DRIVER_SATURATION` (default 8.0, `backend/main.py`) is the one
   heuristic constant behind both stretch features: predicted zone demand this
   saturated is treated as "one productive driver's worth" of hourly pickup

@@ -16,7 +16,9 @@ driver should reposition to, using real NYC TLC yellow-taxi trip data
 - **Serving**: FastAPI backend serves precomputed predictions for the test
   window; a Leaflet map renders a live choropleth heatmap with a date/hour
   picker, per-zone drill-down, and a "best zones to reposition to"
-  recommender (predicted demand discounted by centroid-distance travel time).
+  recommender (predicted demand discounted by real driving time between
+  zones, from a precomputed OSRM road-network matrix — not a straight-line
+  estimate).
 - **Fleet load balancing**: a "Fleet (multi-driver)" mode on the map lets you
   place several drivers and get a load-balanced assignment — a greedy
   capacity-based matcher so drivers aren't all sent to the same single
@@ -30,7 +32,7 @@ driver should reposition to, using real NYC TLC yellow-taxi trip data
 - **Backend**: Python, FastAPI, uvicorn
 - **ML**: scikit-learn (`HistGradientBoostingRegressor`), pandas, DuckDB (data aggregation)
 - **Frontend**: vanilla JS, Leaflet.js (no build step, no framework)
-- **Data sources**: NYC TLC trip records, Open-Meteo weather API
+- **Data sources**: NYC TLC trip records, Open-Meteo weather API, OSRM (real driving-time matrix)
 - **Tests**: pytest + FastAPI TestClient
 - **Deployment**: Docker, docker-compose
 
@@ -44,6 +46,7 @@ uv run python scripts/download_data.py   # downloads ~155MB: NYC TLC trips + zon
 uv run python scripts/prepare_zones.py   # zone centroids + reference table
 uv run python scripts/aggregate.py       # builds the hourly zone x hour demand panel + fare table
 uv run python scripts/train_model.py     # trains the model, writes metrics + predictions
+uv run python scripts/build_travel_matrix.py   # real driving times between all zone pairs (via OSRM)
 ```
 
 ## Run
@@ -84,7 +87,7 @@ backend/main.py            FastAPI app: serves the API + the static frontend
 backend/model_artifacts/   trained model + metrics (generated)
 frontend/                  vanilla JS + Leaflet single-page UI
 data/raw/                  downloaded TLC parquet, zone shapefile→geojson, zone lookup, weather (generated)
-data/processed/            aggregated hourly demand panel, zone fares, precomputed predictions (generated)
+data/processed/            aggregated hourly demand panel, zone fares, travel-time matrix, precomputed predictions (generated)
 tests/                     pytest suite (feature engineering + API)
 Dockerfile, docker-compose.yml, entrypoint.sh   containerized deployment
 ```
@@ -94,8 +97,11 @@ Dockerfile, docker-compose.yml, entrypoint.sh   containerized deployment
 - The demo window (Mar 18–31 2024) is a genuine held-out backtest, not a
   live forecast — the UI's date range is intentionally bounded to it so
   every prediction shown can be checked against what actually happened.
-- Travel time between zones is a straight-line-distance proxy (haversine /
-  assumed avg. speed), not a real routing engine.
+- Travel time between zones comes from a real OSRM road-network routing
+  matrix (`scripts/build_travel_matrix.py`), precomputed once and cached —
+  not a straight-line estimate. A haversine-distance fallback only kicks in
+  for a zone pair genuinely missing from the cached matrix (shouldn't happen
+  post-build, but the API won't 500 if it does).
 - Weather features (hourly temp/precip/snow/wind, city-wide) were added
   expecting a meaningful lift; in practice they moved model MAE by well
   under a point either direction. Kept in because they're honest signal and
